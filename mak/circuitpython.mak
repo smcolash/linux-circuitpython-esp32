@@ -127,10 +127,14 @@ staging :: assets
 	mkdir -p .staging
 	cp -rf source/* .staging/
 
-upload ::
+library ::
 	cd .staging && find -mindepth 1 -maxdepth 1 -type d | xargs -n 1 $(AMPY) rmdir
 	cd .staging && find -mindepth 1 -maxdepth 1 -type d | xargs -n 1 $(AMPY) put
+
+update ::
 	cd .staging && find -mindepth 1 -maxdepth 1 -type f | xargs -n 1 $(AMPY) put
+
+upload :: staging library update
 
 reload :: download circuitpython staging upload
 
