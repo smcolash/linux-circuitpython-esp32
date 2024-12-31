@@ -109,7 +109,7 @@ clean ::
 
 list :
 	-screen -S $(USB_SESSION) -X quit
-	$(AMPY) ls --recursive --long_format
+	-$(AMPY) ls --recursive --long_format
 
 reset ::
 	-screen -S $(USB_SESSION) -X quit
@@ -128,7 +128,7 @@ staging :: assets
 	cp -rf source/* .staging/
 
 library ::
-	cd .staging && find -mindepth 1 -maxdepth 1 -type d | xargs -n 1 $(AMPY) rmdir
+	-cd .staging && find -mindepth 1 -maxdepth 1 -type d | xargs -n 1 $(AMPY) rmdir
 	cd .staging && find -mindepth 1 -maxdepth 1 -type d | xargs -n 1 $(AMPY) put
 
 update ::
