@@ -1,10 +1,15 @@
-all ::
+#
+# provide a default target
+#
+all :: upload
 
+#
+# make the targets and settings easy to view
+#
 help ::
 	@echo "Environment Setup:"
 	@echo
 	@echo "  pip3 install esptool"
-	@echo "  pip3 install mpremote"
 	@echo "  pip3 install adafruit-ampy"
 	@echo
 
@@ -16,17 +21,7 @@ help ::
 help ::
 	@echo "Build Targets:"
 	@echo
-	@echo "  make all"
-	@echo "  make clean"
-	@echo "  make download"
-	@echo "  make erase"
-	@echo "  make flash"
-	@echo "  make circuitpython"
-	@echo "  make repl"
-	@echo "  make list"
-	@echo "  make reset"
-	@echo
-	@echo "  make clean all repl"
+	@echo "  make ... (TODO)"
 	@echo
 
 help ::
@@ -43,14 +38,35 @@ help ::
 	@echo "  BUNDLE_BUILD = $(BUNDLE_BUILD)"
 	@echo "  BUNDLE = $(BUNDLE)"
 	@echo
-	@echo "  USB_SESSION = $(USB_SESSION)"
 	@echo "  USB_TTY = $(USB_TTY)"
 	@echo "  USB_BAUD = $(USB_BAUD)"
+	@echo
+	@echo "  REPL_SCREEN = $(REPL_SCREEN)"
+	@echo "  REPL_BAUD = $(REPL_BAUD)"
 
+#
+# set helpful global values and command aliases
+#
+REPL_SCREEN ?= REPL
+USB_TTY ?= /dev/ttyUSB0
+USB_BAUD ?= 921600
+REPL_BAUD = 115200
+
+WGET ?= wget --no-check-certificate
+ESPTOOL ?= esptool.py --chip esp32 --baud $(USB_BAUD) --port $(USB_TTY)
+AMPY ?= ampy --port $(USB_TTY)
+
+CACHE ?= $(PWD)/.cache
+STAGING ?= $(PWD)/.staging
+UPLOAD ?= $(PWD)/.upload
+
+#
+# set the platform name
+#
 PLATFORM ?= adafruit-circuitpython
 
 #
-# CircuitPython firmware: https://circuitpython.org/downloads
+# identify the platform firmware to use
 #
 FIRMWARE_TARGET ?= doit_esp32_devkit_v1
 FIRMWARE_LOCALE ?= en_US
@@ -58,90 +74,164 @@ FIRMWARE_VERSION ?= 9.2.1
 FIRMWARE ?= $(PLATFORM)-$(FIRMWARE_TARGET)-$(FIRMWARE_LOCALE)-$(FIRMWARE_VERSION).bin
 
 #
-# CircuitPython module bundle: https://circuitpython.org/libraries
+# identify the module bundle
 #
 BUNDLE_VERSION ?= 9.x
 BUNDLE_BUILD ?= 20241128
 BUNDLE ?= $(PLATFORM)-bundle-$(BUNDLE_VERSION)-mpy-$(BUNDLE_BUILD)
 
-USB_SESSION ?= REPL
-USB_TTY ?= /dev/ttyUSB0
-USB_BAUD ?= 921600
+#
+# erase the current board firmware
+#
+erase :: unscreen
+	$(ESPTOOL) erase_flash
 
-download :: firmware bundle
+#
+# maintain a caching directory
+#
+cache ::
+	mkdir -p $(CACHE)
 
 clean ::
-	rm -rf .cache
+	rm -rf $(CACHE)
 
-firmware : .cache/$(FIRMWARE)
+#
+# ensure the cache is ready for the firmware
+#
+firmware :: cache
 
-.cache/$(FIRMWARE) :
-	mkdir -p .cache
-	cd .cache && wget --no-check-certificate --output-document $(FIRMWARE) https://downloads.circuitpython.org/bin/$(FIRMWARE_TARGET)/$(FIRMWARE_LOCALE)/$(FIRMWARE)
+#
+# get a copy of the board firmware
+#
+$(CACHE)/$(FIRMWARE) :
+	$(WGET) \
+		--output-document $(CACHE)/$(FIRMWARE) \
+		https://downloads.circuitpython.org/bin/$(FIRMWARE_TARGET)/$(FIRMWARE_LOCALE)/$(FIRMWARE)
 
-bundle : .cache/$(BUNDLE)
+firmware :: $(CACHE)/$(FIRMWARE) 
 
-.cache/$(BUNDLE) :
-	mkdir -p .cache
-	cd .cache && wget --no-check-certificate --output-document $(BUNDLE).zip https://github.com/adafruit/Adafruit_CircuitPython_Bundle/releases/download/$(BUNDLE_BUILD)/$(BUNDLE).zip
-	cd .cache && unzip $(BUNDLE)
+#
+# flash new firmware to the board
+#
+flash :: unscreen firmware erase
+	$(ESPTOOL) write_flash -z 0x0 $(CACHE)/$(FIRMWARE)
 
-erase :
-	-screen -S $(USB_SESSION) -X quit
-	esptool.py --chip esp32 --port $(USB_TTY) --baud $(USB_BAUD) erase_flash
+#
+# a baseline load has new firmware and nothing else
+#
+baseline :: erase flash
 
-flash :
-	-screen -S $(USB_SESSION) -X quit
-	esptool.py --port $(USB_TTY) --baud $(USB_BAUD) write_flash -z 0x0 .cache/$(FIRMWARE)
+#
+# ensure the cache is ready for the modules
+#
+modules :: cache
 
-circuitpython :: erase flash list
+#
+# get a copy of the module bundle
+#
+$(CACHE)/$(BUNDLE).zip :
+	$(WGET) \
+		--output-document $(CACHE)/$(BUNDLE).zip \
+		https://github.com/adafruit/Adafruit_CircuitPython_Bundle/releases/download/$(BUNDLE_BUILD)/$(BUNDLE).zip
 
-AMPY = ampy --port $(USB_TTY)
+$(CACHE)/$(BUNDLE) : $(CACHE)/$(BUNDLE).zip
+	cd $(CACHE) && unzip $(BUNDLE)
+	cd $(CACHE) && find $(BUNDLE) -exec touch {} \;
 
-repl ::
+#
+# add the bundle to modules
+#
+modules :: $(CACHE)/$(BUNDLE) 
+
+#
+# remove any prior screen sessions that would interfere with serial
+#
+unscreen ::
+	@ screen -list | grep REPL | awk '{print $$1}' | xargs -I % screen -S % -X quit
+
+#
+# use a screen session to interact with the REPL
+#
+repl :: unscreen
 	rm -f repl.log
-	-screen -S $(USB_SESSION) -X quit
-	screen -S $(USB_SESSION) -L -Logfile repl.log $(USB_TTY) 115200
-	-screen -S $(USB_SESSION) -X quit
+	screen -S REPL -L -Logfile repl.log /dev/ttyUSB0 $(REPL_BAUD)
+	@ true || screen -S REPL -X quit 2>&1 >> /dev/null
 
 clean ::
 	rm -rf repl.log
 
-list :
-	-screen -S $(USB_SESSION) -X quit
+#
+# list the files on the board
+#
+list :: unscreen
 	-$(AMPY) ls --recursive --long_format
 
-reset ::
-	-screen -S $(USB_SESSION) -X quit
+#
+# reset the board
+#
+reset :: unscreen
 	$(AMPY) reset
 
+#
+# maintain a disaposable staging area
+#
 staging ::
-	mkdir -p .staging/lib
+	mkdir -p $(STAGING)
+	mkdir -p $(STAGING)/lib
 
 clean ::
-	rm -rf .staging
+	rm -rf $(STAGING)
 
-assets ::
+#
+# get modules for staging
+#
+staging :: modules
 
-staging :: assets
-	mkdir -p .staging
-	cp -rf source/* .staging/
+#
+# copy the source files into staging
+#
+staging ::
+	cp -rfp source/* $(STAGING)
 
-library ::
-	-cd .staging && find -mindepth 1 -maxdepth 1 -type d | xargs -n 1 $(AMPY) rmdir
-	cd .staging && find -mindepth 1 -maxdepth 1 -type d | xargs -n 1 $(AMPY) put
+#
+# upload the staging area to the board
+#
+upload :: unscreen staging
+	-cd $(STAGING) && \
+		find . -type f -newer $(UPLOAD) | \
+		xargs -r -n 1 dirname | \
+		sort -u | \
+		sed -e '/^\.$$/d' | \
+		xargs -r -n 1 $(AMPY) mkdir >> /dev/null
+	-cd $(STAGING) && \
+		find -type f -newer $(UPLOAD) | \
+		xargs -r -n 1 $(AMPY) rm >> /dev/null
+	cd $(STAGING) && \
+		find -type f -newer $(UPLOAD) -exec $(AMPY) put {} {} \;
+	touch $(UPLOAD)
 
-update ::
-	cd .staging && find -mindepth 1 -maxdepth 1 -type f | xargs -n 1 $(AMPY) put
+# cd .staging && find -mindepth 1 -maxdepth 1 -type f | xargs -n 1 $(AMPY) put
 
-upload :: staging library update
+clean ::
+	rm -rf $(UPLOAD)
+	touch -t '01010000' $(UPLOAD)
 
-reload :: download circuitpython staging upload
+zxcv ::
+	touch -t '01010000' $(UPLOAD)
 
-all :: reload
+#
+# download and reload everything
+#
+reload :: clean baseline upload
 
-debug ::
-	-screen -S $(USB_SESSION) -X quit
+#
+# upload and list the lastest staged items
+#
+all :: upload list
+
+#
+# run the latest staged items
+#
+debug :: all
 	$(AMPY) run source/code.py
-
 
