@@ -214,10 +214,7 @@ upload :: unscreen staging
 
 clean ::
 	rm -rf $(UPLOAD)
-	touch -t '01010000' $(UPLOAD)
-
-zxcv ::
-	touch -t '01010000' $(UPLOAD)
+	touch -t '197001010000' $(UPLOAD)
 
 #
 # download and reload everything
