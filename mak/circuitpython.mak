@@ -224,7 +224,7 @@ reload :: clean baseline upload
 #
 # upload and list the lastest staged items
 #
-all :: upload list
+all :: upload
 
 #
 # run the latest staged items
